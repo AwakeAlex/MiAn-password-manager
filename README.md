@@ -9,7 +9,7 @@
 ## 安全声明
 
 - **纯本地运行**：没有任何后端服务器，不会收集、上传或同步用户数据。
-- **本地加密**：主密码通过 PBKDF2（60 万次迭代）派生密钥，使用 AES-256-GCM 加密每条记录。
+- **本地加密**：主密码通过 PBKDF2-SHA256（60 万次迭代）派生密钥，随机生成 16 字节盐值。数据使用 AES-256-GCM 加密，每条记录独立生成 12 字节随机 IV。
 - **密钥派生分离**：主密钥经 HKDF 扩展后分别用于验证和数据库加密，降低泄露风险。
 - **开源可审计**：核心代码完全开放，欢迎安全爱好者审查并提出改进建议。
 - **数据归属用户**：所有数据保存在你的浏览器或设备本地，卸载或清除数据即丢失，请定期导出备份。
@@ -19,21 +19,27 @@
 ## 已实现功能
 
 - **本地加密保险库**：PBKDF2 + AES-256-GCM，主密码是解密的唯一钥匙。
-- **登录安全锁定**：连续输错 5 次锁定 30 秒、10 次锁定 5 分钟、15 次永久锁定（需重置保险库）。
+- **登录安全锁定**：连续输错 5 次锁定 30 秒、10 次锁定 5 分钟、15 次永久锁定（需重置保险库）。⚠️ 永久锁定后重置保险库将**删除所有本地数据**，请务必提前导出加密备份。
 - **跨平台 PWA**：可安装到手机主屏和桌面，支持离线使用。
 - **密码管理**：新增、编辑、删除、搜索、收藏密码记录。
 - **密码生成器**：随机密码、助记密码、PIN 三种模式。
-- **导入/导出**：导出加密备份 JSON，可在同设备或不同设备导入。
+- **导入/导出**：导出为 AES-256-GCM 加密的 JSON 备份文件，包含盐值、迭代参数和加密数据。可用原主密码在同设备或不同设备导入恢复。
 - **修改主密码**：可更换主密码并重新加密所有记录。
 - **安全声明页面**：在设置中查看应用的隐私与安全说明。
 - **重置保险库**：一键清空本地数据。
 
 ---
 
+## 截图
+
+> 📸 即将添加应用界面截图，包括密码列表、密码生成器、设置页面等。
+
+---
+
 ## 目录结构
 
 ```
-V1-0-1/
+./                              # 项目根目录
 ├── index.html                # 应用入口（PWA / Capacitor）
 ├── app.js                    # 业务逻辑：加密、数据库、UI、锁定策略
 ├── styles.css                # 移动端优先样式
@@ -55,10 +61,12 @@ V1-0-1/
 
 ## 快速开始
 
+**环境要求：Node.js 16+，无需额外安装依赖。**
+
 ### 1. 直接运行网页版（开发调试）
 
-```powershell
-cd "d:\AI 项目\密安\V1-0-1"
+```bash
+# 克隆仓库后进入项目目录
 node server.js
 ```
 
@@ -66,8 +74,7 @@ node server.js
 
 ### 2. 构建单文件 HTML（可离线分发）
 
-```powershell
-cd "d:\AI 项目\密安\V1-0-1"
+```bash
 node build-local.js
 ```
 
@@ -75,11 +82,13 @@ node build-local.js
 
 ### 3. 构建 Android APK
 
-需要配置好 Java 21、Android SDK、Gradle，然后运行：
+需要配置好：[Java 21](https://adoptium.net/)、[Android SDK](https://developer.android.com/studio)、[Gradle](https://gradle.org/)。
 
-```powershell
-cd "d:\AI 项目\密安\V1-0-1\android"
-.\gradlew.bat assembleDebug
+```bash
+cd android
+# 首次构建需创建 local.properties 并配置 SDK 路径
+# 内容示例：sdk.dir=C\:\\Users\\你的用户名\\AppData\\Local\\Android\\Sdk
+gradlew.bat assembleDebug
 ```
 
 构建完成后 APK 位于：
@@ -88,7 +97,7 @@ cd "d:\AI 项目\密安\V1-0-1\android"
 android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-> 注意：项目已排除 `android/local.properties`，首次构建前请在该文件中配置你的本地 Android SDK 路径。
+> 注意：`android/local.properties` 已被 `.gitignore` 排除，首次构建前请手动创建该文件并配置你的本地 Android SDK 路径。Android SDK 可通过安装 [Android Studio](https://developer.android.com/studio) 获取。
 
 ---
 
@@ -110,7 +119,7 @@ android/app/build/outputs/apk/debug/app-debug.apk
 
 ## 贡献
 
-欢迎提交 Issue 和 Pull Request，特别是：
+欢迎提交 Issue 和 Pull Request。参见 [CONTRIBUTING.md](./CONTRIBUTING.md) 了解详细指南。特别欢迎：
 
 - 安全审计与加密逻辑改进
 - 密码强度分析
