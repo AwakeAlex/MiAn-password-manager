@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+android/build/
+android/app/build/
+android/.gradle/
+android/capacitor-cordova-android-plugins/build/
+
+# Android local SDK path (contains absolute local path)
+android/local.properties
+
+# Signing files (never commit real certificates)
+*.keystore
+*.jks
+*.jks.bak
+key.properties
+
+# Logs
+*.log
+npm-debug.log*
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Backup archives
+*.zip
+*.bak
+*.tmp

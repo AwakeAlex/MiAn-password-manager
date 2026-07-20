@@ -1,0 +1,14 @@
+{
+  "appId": "com.mian.password",
+  "appName": "密安密码本",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "http"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 0
+    }
+  }
+}

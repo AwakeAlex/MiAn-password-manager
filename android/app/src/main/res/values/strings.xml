@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">密安密码本</string>
+    <string name="title_activity_main">密安密码本</string>
+    <string name="package_name">com.mian.password</string>
+    <string name="custom_url_scheme">com.mian.password</string>
+</resources>

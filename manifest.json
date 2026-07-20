@@ -1,0 +1,19 @@
+{
+  "name": "密安密码本",
+  "short_name": "密安",
+  "description": "本地安全的跨平台密码管理器",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
