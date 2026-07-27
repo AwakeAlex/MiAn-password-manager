@@ -1057,5 +1057,44 @@
     navigator.serviceWorker.register('sw.js').catch(() => {})
   }
 
+  // ===== iOS 安装引导 =====
+  // 检测 iOS 设备（含 iPadOS 桌面模式 UA）
+  function isIosDevice() {
+    const ua = navigator.userAgent
+    return /iphone|ipod/i.test(ua) ||
+      (/ipad/i.test(ua)) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+  }
+
+  // 检测是否已以独立窗口模式运行（已添加到主屏幕）
+  function isStandaloneMode() {
+    return window.navigator.standalone === true ||
+      window.matchMedia('(display-mode: standalone)').matches
+  }
+
+  function maybeShowIosInstallBanner() {
+    if (location.protocol === 'file:') return // 单文件版不支持安装
+    if (!isIosDevice() || isStandaloneMode()) return
+    if (localStorage.getItem('mian_ios_banner_dismissed')) return
+
+    const banner = document.createElement('div')
+    banner.className = 'ios-install-banner'
+    banner.innerHTML = `
+      <div class="ios-banner-text">
+        <strong>安装到主屏幕，体验更好</strong>
+        点击 Safari 底部分享按钮
+        <svg class="ios-share-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 8 5-5 5 5"/><path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></svg>，
+        选择「添加到主屏幕」，即可像 App 一样离线使用。
+      </div>
+      <button class="ios-banner-close" id="iosBannerClose" aria-label="关闭">✕</button>
+    `
+    document.body.appendChild(banner)
+    document.getElementById('iosBannerClose').addEventListener('click', () => {
+      banner.remove()
+      localStorage.setItem('mian_ios_banner_dismissed', '1')
+    })
+  }
+
   render()
+  maybeShowIosInstallBanner()
 })()

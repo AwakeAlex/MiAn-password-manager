@@ -38,6 +38,7 @@ function main() {
   // 4. 移除 manifest 和 icon 外部引用
   html = html.replace(/<link[^>]*rel=["']manifest["'][^>]*>\n?/, '')
   html = html.replace(/<link[^>]*rel=["']icon["'][^>]*>\n?/, '')
+  html = html.replace(/<link[^>]*rel=["']apple-touch-icon["'][^>]*>\n?/, '')
 
   // 5. 更新 description
   html = html.replace(/<meta name="description" content="[^"]*" \/>/, '<meta name="description" content="密安密码本 - 本地单文件版" />')

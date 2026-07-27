@@ -1,4 +1,4 @@
-const CACHE_NAME = 'mian-v2'
+const CACHE_NAME = 'mian-v3'
 
 const ASSETS = [
   './',
@@ -6,7 +6,10 @@ const ASSETS = [
   './styles.css',
   './app.js',
   './icon.svg',
-  './manifest.json'
+  './manifest.json',
+  './icons/apple-touch-icon.png',
+  './icons/icon-192.png',
+  './icons/icon-512.png'
 ]
 
 self.addEventListener('install', (e) => {
