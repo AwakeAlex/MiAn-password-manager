@@ -119,9 +119,9 @@
     return bufToBase64(hash)
   }
 
-  async function deriveMasterKey(password, salt) {
+  async function deriveMasterKey(password, salt, iterations = KDF_ITERATIONS) {
     const keyMaterial = await crypto.subtle.importKey('raw', encoder.encode(password), 'PBKDF2', false, ['deriveBits'])
-    return crypto.subtle.deriveBits({ name: 'PBKDF2', salt, iterations: KDF_ITERATIONS, hash: 'SHA-256' }, keyMaterial, KEY_LENGTH * 8)
+    return crypto.subtle.deriveBits({ name: 'PBKDF2', salt, iterations, hash: 'SHA-256' }, keyMaterial, KEY_LENGTH * 8)
   }
 
   async function hkdfExpand(key, label) {
@@ -217,7 +217,7 @@
     const masterKey = new Uint8Array(await deriveMasterKey(password, salt))
     const verifierKey = new Uint8Array(await hkdfExpand(masterKey, 'verifier'))
     const verifier = await sha256(verifierKey)
-    await dbPut(VAULT_STORE, { salt: bufToBase64(salt), verifier, hint, createdAt: Date.now() }, 'config')
+    await dbPut(VAULT_STORE, { salt: bufToBase64(salt), verifier, hint, kdfIterations: KDF_ITERATIONS, createdAt: Date.now() }, 'config')
     clearLockState()
     masterKeyCache = masterKey
     dbKeyCache = new Uint8Array(await hkdfExpand(masterKey, 'database'))
@@ -233,7 +233,7 @@
     }
     const config = await dbGet(VAULT_STORE, 'config')
     if (!config) throw new Error('保险库尚未初始化')
-    const masterKey = new Uint8Array(await deriveMasterKey(password, base64ToBuf(config.salt)))
+    const masterKey = new Uint8Array(await deriveMasterKey(password, base64ToBuf(config.salt), config.kdfIterations || KDF_ITERATIONS))
     const verifierKey = new Uint8Array(await hkdfExpand(masterKey, 'verifier'))
     const verifier = await sha256(verifierKey)
     if (verifier !== config.verifier) {
@@ -599,6 +599,15 @@
         <div class="search-bar">
           <input type="text" id="searchInput" class="search-input" placeholder="搜索平台、用户名、备注..." value="${filter}" />
         </div>
+        ${getBackupReminder() ? `
+          <div class="backup-banner" id="backupBanner">
+            <div class="backup-banner-text">${getBackupReminder()}</div>
+            <div class="backup-banner-actions">
+              <button class="small-btn" id="btnBackupNow">立即备份</button>
+              <button class="small-btn" id="btnBackupSnooze">本月不再提醒</button>
+            </div>
+          </div>
+        ` : ''}
         <div class="content" id="homeContent"></div>
         <button class="fab" id="btnAdd">+</button>
       </div>
@@ -636,6 +645,17 @@
     }
 
     renderList(filter)
+
+    document.getElementById('btnBackupNow')?.addEventListener('click', async () => {
+      const ok = await exportBackup()
+      if (ok) renderHome(filter)
+    })
+    document.getElementById('btnBackupSnooze')?.addEventListener('click', () => {
+      const meta = loadBackupMeta()
+      meta.snoozeUntil = Date.now() + 30 * DAY_MS
+      saveBackupMeta(meta)
+      renderHome(filter)
+    })
 
     document.getElementById('searchInput').addEventListener('input', (e) => renderList(e.target.value))
     document.getElementById('btnAdd').addEventListener('click', () => { editingId = null; navigate('form') })
@@ -887,12 +907,15 @@
           <div class="settings-list">
             <button class="settings-item" id="btnLock"><span>立即锁定</span><span>🔒</span></button>
             <button class="settings-item" id="btnSecurity"><span>安全声明</span><span>🛡</span></button>
+            <div class="backup-status">上次备份：${formatBackupTime(loadBackupMeta().lastBackupAt)}</div>
             <button class="settings-item" id="btnExport"><span>导出加密备份</span><span>↓</span></button>
             <button class="settings-item" id="btnImport"><span>导入加密备份</span><span>↑</span></button>
+            <button class="settings-item" id="btnCopyBackup"><span>复制备份文本（备用）</span><span>⧉</span></button>
+            <button class="settings-item" id="btnPasteBackup"><span>粘贴文本导入（备用）</span><span>↵</span></button>
             <button class="settings-item" id="btnChangePw"><span>修改主密码</span><span>🔑</span></button>
             <button class="settings-item settings-item-danger" id="btnReset"><span>重置保险库</span><span>🗑</span></button>
           </div>
-          <div style="margin-top:24px;color:var(--text-muted);font-size:13px;text-align:center">密安密码本 v0.1.0<br />本地加密，不上传服务器</div>
+          <div style="margin-top:24px;color:var(--text-muted);font-size:13px;text-align:center">密安密码本 v1.1.0<br />本地加密，不上传服务器</div>
         </div>
       </div>
     `
@@ -900,26 +923,35 @@
     document.getElementById('btnBack').addEventListener('click', () => renderHome())
     document.getElementById('btnLock').addEventListener('click', () => { lockVault(); navigate('unlock') })
     document.getElementById('btnSecurity').addEventListener('click', renderSecurityStatement)
-    document.getElementById('btnExport').addEventListener('click', exportBackup)
+    document.getElementById('btnExport').addEventListener('click', () => exportBackup())
     document.getElementById('btnImport').addEventListener('click', importBackup)
+    document.getElementById('btnCopyBackup').addEventListener('click', copyBackupText)
+    document.getElementById('btnPasteBackup').addEventListener('click', importBackupFromText)
     document.getElementById('btnChangePw').addEventListener('click', renderChangePassword)
     document.getElementById('btnReset').addEventListener('click', () => {
-      app.innerHTML += `
-        <div class="modal-overlay" id="resetModal">
-          <div class="modal">
-            <div class="modal-title">危险操作</div>
-            <div class="modal-text">重置保险库将删除本地所有密码记录和主密码，且无法恢复。确定继续吗？</div>
-            <div class="modal-actions">
-              <button class="btn btn-secondary" id="cancelReset">取消</button>
-              <button class="btn btn-danger" id="confirmReset">确认重置</button>
-            </div>
-          </div>
+      const meta = loadBackupMeta()
+      const needsBackup = entriesCache.length > 0 && (!meta.lastBackupAt || Date.now() - meta.lastBackupAt > 30 * DAY_MS)
+      const modal = showBackupModal(`
+        <div class="modal-title">危险操作</div>
+        <div class="modal-text">
+          重置保险库将删除本地所有密码记录和主密码，且无法恢复。
+          ${needsBackup ? '<br /><br /><strong style="color:var(--accent)">你尚未备份或备份已超过 30 天，强烈建议先导出备份。</strong>' : ''}
         </div>
-      `
-      document.getElementById('cancelReset').addEventListener('click', () => document.getElementById('resetModal').remove())
-      document.getElementById('confirmReset').addEventListener('click', async () => {
+        <div class="modal-actions">
+          <button class="btn btn-secondary" id="cancelReset">取消</button>
+          <button class="btn btn-danger" id="confirmReset">确认重置</button>
+        </div>
+        ${needsBackup ? '<button class="btn btn-primary btn-block" id="backupBeforeReset" style="margin-top:12px">先导出备份</button>' : ''}
+      `)
+      modal.querySelector('#cancelReset').addEventListener('click', () => modal.remove())
+      modal.querySelector('#backupBeforeReset')?.addEventListener('click', async () => {
+        const ok = await exportBackup('before_reset')
+        if (ok) { modal.remove(); showToast('备份完成，如仍需重置请再次操作') }
+      })
+      modal.querySelector('#confirmReset').addEventListener('click', async () => {
         await resetVault()
         initialized = false
+        modal.remove()
         navigate('unlock')
         showToast('保险库已重置')
       })
@@ -956,50 +988,328 @@
             <h3>责任提示</h3>
             <p>请牢记主密码，遗忘后无法恢复数据。建议定期导出备份，并避免在公共设备上保存主密码。</p>
           </div>
-          <div style="margin-top:24px;color:var(--text-muted);font-size:13px;text-align:center">密安密码本 v1.0.1</div>
+          <div style="margin-top:24px;color:var(--text-muted);font-size:13px;text-align:center">密安密码本 v1.1.0</div>
         </div>
       </div>
     `
     document.getElementById('btnBack').addEventListener('click', () => renderSettings())
   }
 
-  async function exportBackup() {
-    const config = await dbGet(VAULT_STORE, 'config')
-    const entries = await dbGetAll(ENTRIES_STORE)
-    const data = { version: 1, exportedAt: Date.now(), config, entries }
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+  // ===== 备份与恢复（v2） =====
+  const BACKUP_META_KEY = 'mian_backup_meta'
+  const DAY_MS = 24 * 60 * 60 * 1000
+
+  function loadBackupMeta() {
+    try { return JSON.parse(localStorage.getItem(BACKUP_META_KEY)) || {} } catch { return {} }
+  }
+
+  function saveBackupMeta(meta) {
+    localStorage.setItem(BACKUP_META_KEY, JSON.stringify(meta))
+  }
+
+  function markBackupDone() {
+    const meta = loadBackupMeta()
+    meta.lastBackupAt = Date.now()
+    meta.snoozeUntil = 0
+    saveBackupMeta(meta)
+  }
+
+  function formatBackupTime(ts) {
+    if (!ts) return '从未备份'
+    const days = Math.floor((Date.now() - ts) / DAY_MS)
+    const date = new Date(ts).toLocaleDateString('zh-CN')
+    if (days <= 0) return `${date}（今天）`
+    return `${date}（${days} 天前）`
+  }
+
+  function getBackupReminder() {
+    if (!entriesCache.length) return null
+    const meta = loadBackupMeta()
+    if ((meta.snoozeUntil || 0) > Date.now()) return null
+    if (!meta.lastBackupAt) {
+      const firstAt = Math.min(...entriesCache.map(e => e.createdAt || Date.now()))
+      if (Date.now() - firstAt < 7 * DAY_MS) return null
+      return '你还没有导出过加密备份。设备丢失或数据被清理后将无法找回，建议立即备份。'
+    }
+    const days = Math.floor((Date.now() - meta.lastBackupAt) / DAY_MS)
+    if (days < 30) return null
+    return `你已 ${days} 天未备份。建议导出最新加密备份，并保存到安全位置。`
+  }
+
+  async function createBackupData() {
+    const [config, entries, categories] = await Promise.all([
+      dbGet(VAULT_STORE, 'config'),
+      dbGetAll(ENTRIES_STORE),
+      dbGetAll(CATEGORIES_STORE)
+    ])
+    if (!config) throw new Error('保险库尚未初始化')
+    return {
+      version: 2,
+      app: 'mian-password-manager',
+      exportedAt: Date.now(),
+      kdf: { name: 'PBKDF2', hash: 'SHA-256', iterations: config.kdfIterations || KDF_ITERATIONS },
+      encryption: { name: 'AES-GCM', ivLength: IV_LENGTH, tagLength: TAG_LENGTH },
+      config,
+      entries,
+      categories
+    }
+  }
+
+  function makeBackupFileName(label = '') {
+    const now = new Date()
+    const pad = n => String(n).padStart(2, '0')
+    const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}`
+    return `mian_backup_${label ? label + '_' : ''}${stamp}.json`
+  }
+
+  function getNativeBackupPlugins() {
+    const cap = window.Capacitor
+    if (!cap || !cap.Plugins) return null
+    const { Filesystem, Share } = cap.Plugins
+    if (!Filesystem || !Share) return null
+    const isNative = typeof cap.isNativePlatform === 'function' ? cap.isNativePlatform() : true
+    return isNative ? { Filesystem, Share } : null
+  }
+
+  async function exportBackupOnAndroid(text, fileName, plugins) {
+    const { Filesystem, Share } = plugins
+    await Filesystem.writeFile({
+      path: fileName,
+      data: bufToBase64(encoder.encode(text)),
+      directory: 'CACHE',
+      recursive: true
+    })
+    const { uri } = await Filesystem.getUri({ path: fileName, directory: 'CACHE' })
+    await Share.share({
+      title: '密安密码本加密备份',
+      text: '备份内容已加密，请保存到安全位置。',
+      files: [uri],
+      dialogTitle: '保存或分享加密备份'
+    })
+  }
+
+  async function exportBackupOnWeb(text, fileName) {
+    // iOS / 支持的移动浏览器：直接调起系统分享，可保存到“文件”
+    if (navigator.share && navigator.canShare) {
+      try {
+        const file = new File([text], fileName, { type: 'application/json' })
+        if (navigator.canShare({ files: [file] })) {
+          await navigator.share({ title: '密安密码本加密备份', files: [file] })
+          return { ok: true, message: '已调起系统分享，请选择保存位置' }
+        }
+      } catch (err) {
+        if (err && err.name === 'AbortError') return { ok: false, cancelled: true }
+      }
+    }
+
+    // Chromium：让用户自己选择保存路径
+    if (window.showSaveFilePicker) {
+      try {
+        const handle = await window.showSaveFilePicker({
+          suggestedName: fileName,
+          types: [{ description: '密安加密备份', accept: { 'application/json': ['.json'] } }]
+        })
+        const writable = await handle.createWritable()
+        await writable.write(text)
+        await writable.close()
+        return { ok: true, message: '备份已保存到你选择的位置' }
+      } catch (err) {
+        if (err && err.name === 'AbortError') return { ok: false, cancelled: true }
+      }
+    }
+
+    // 最后回退：普通浏览器下载
+    const blob = new Blob([text], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `mian_backup_${new Date().toISOString().slice(0, 10)}.json`
+    a.download = fileName
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
-    URL.revokeObjectURL(url)
-    showToast('导出成功')
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+    return { ok: true, message: '已触发下载，请查看浏览器下载记录' }
+  }
+
+  async function exportBackup(label = '') {
+    try {
+      const data = await createBackupData()
+      const text = JSON.stringify(data, null, 2)
+      const fileName = makeBackupFileName(label)
+      const plugins = getNativeBackupPlugins()
+      if (plugins) {
+        await exportBackupOnAndroid(text, fileName, plugins)
+      } else {
+        const result = await exportBackupOnWeb(text, fileName)
+        if (!result.ok) {
+          if (!result.cancelled) showToast('导出未完成')
+          return false
+        }
+        showToast(result.message)
+      }
+      markBackupDone()
+      return true
+    } catch (err) {
+      showToast('导出失败：' + (err.message || '未知错误'))
+      return false
+    }
+  }
+
+  async function copyBackupText() {
+    try {
+      const data = await createBackupData()
+      await copyToClipboard(JSON.stringify(data))
+      showToast('备份文本已复制，请立即粘贴保存')
+    } catch (err) {
+      showToast('复制失败：' + (err.message || '未知错误'))
+    }
+  }
+
+  function showBackupModal(content) {
+    const overlay = document.createElement('div')
+    overlay.className = 'modal-overlay'
+    overlay.innerHTML = `<div class="modal">${content}</div>`
+    document.body.appendChild(overlay)
+    return overlay
   }
 
   function importBackup() {
     const input = document.createElement('input')
     input.type = 'file'
-    input.accept = '.json,application/json'
+    input.accept = '.json,.txt,application/json,text/plain'
     input.onchange = async (e) => {
       const file = e.target.files[0]
       if (!file) return
       try {
-        const data = JSON.parse(await file.text())
-        if (!data.config || !data.entries) throw new Error('无效的备份文件')
-        await dbPut(VAULT_STORE, data.config, 'config')
-        for (const entry of data.entries) await dbPut(ENTRIES_STORE, entry)
-        showToast('导入成功，请重新解锁')
-        lockVault()
-        initialized = true
-        navigate('unlock')
+        await prepareImport(await file.text())
       } catch (err) {
-        showToast('导入失败：' + err.message)
+        showToast('读取备份失败：' + (err.message || '未知错误'))
       }
     }
     input.click()
+  }
+
+  function importBackupFromText() {
+    const modal = showBackupModal(`
+      <div class="modal-title">粘贴备份文本</div>
+      <div class="modal-text">粘贴完整备份 JSON 内容。仅在文件无法选择时使用。</div>
+      <textarea class="input-field textarea" id="importText" style="min-height:140px;margin-bottom:16px" placeholder="粘贴备份文本"></textarea>
+      <p class="error-text" id="importTextError"></p>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" id="cancelTextImport">取消</button>
+        <button class="btn btn-primary" id="confirmTextImport">下一步</button>
+      </div>
+    `)
+    modal.querySelector('#cancelTextImport').addEventListener('click', () => modal.remove())
+    modal.querySelector('#confirmTextImport').addEventListener('click', async () => {
+      const text = modal.querySelector('#importText').value.trim()
+      if (!text) { modal.querySelector('#importTextError').textContent = '请粘贴备份文本'; return }
+      modal.remove()
+      await prepareImport(text)
+    })
+  }
+
+  function validateBackupData(data) {
+    if (!data || typeof data !== 'object') throw new Error('备份文件不是有效的 JSON')
+    if (!data.config || !data.config.salt || !data.config.verifier || !Array.isArray(data.entries)) {
+      throw new Error('无效的密安备份文件')
+    }
+    if (data.version && data.version > 2) throw new Error('备份来自更新版本，请先升级应用')
+    return data
+  }
+
+  async function verifyBackupPassword(data, password) {
+    const iterations = data.kdf?.iterations || data.config.kdfIterations || KDF_ITERATIONS
+    const masterKey = new Uint8Array(await deriveMasterKey(password, base64ToBuf(data.config.salt), iterations))
+    const verifierKey = new Uint8Array(await hkdfExpand(masterKey, 'verifier'))
+    const verifier = await sha256(verifierKey)
+    if (verifier !== data.config.verifier) throw new Error('主密码与备份不匹配')
+
+    const dbKey = new Uint8Array(await hkdfExpand(masterKey, 'database'))
+    // 写入前逐条试解密，避免导入损坏或无法解密的备份
+    for (let i = 0; i < data.entries.length; i++) {
+      const entry = data.entries[i]
+      try {
+        await aesGcmDecrypt(entry.encryptedPayload, entry.nonce, entry.tag, dbKey)
+      } catch {
+        throw new Error(`第 ${i + 1} 条记录无法解密，备份可能已损坏`)
+      }
+    }
+  }
+
+  async function prepareImport(text) {
+    let data
+    try {
+      data = validateBackupData(JSON.parse(text))
+    } catch (err) {
+      showBackupModal(`
+        <div class="modal-title">无法导入</div>
+        <div class="modal-text">${err.message || '备份格式无效'}</div>
+        <div class="modal-actions"><button class="btn btn-primary" id="closeInvalidImport">知道了</button></div>
+      `).querySelector('#closeInvalidImport').addEventListener('click', function () { this.closest('.modal-overlay').remove() })
+      return
+    }
+
+    const exportedAt = data.exportedAt ? new Date(data.exportedAt).toLocaleString('zh-CN') : '未知（旧版备份）'
+    const modal = showBackupModal(`
+      <div class="modal-title">确认导入备份</div>
+      <div class="modal-text">
+        备份时间：${exportedAt}<br />
+        密码记录：${data.entries.length} 条<br />
+        备份格式：v${data.version || 1}<br /><br />
+        <strong style="color:var(--accent)">导入将替换当前全部数据。</strong>
+        ${entriesCache.length ? '继续前会自动先导出当前备份。' : ''}
+      </div>
+      <input type="password" class="input-field" id="importPassword" placeholder="输入该备份对应的主密码" style="margin-bottom:12px" />
+      <p class="error-text" id="importError"></p>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" id="cancelImport">取消</button>
+        <button class="btn btn-primary" id="confirmImport">验证并导入</button>
+      </div>
+    `)
+    modal.querySelector('#cancelImport').addEventListener('click', () => modal.remove())
+    modal.querySelector('#confirmImport').addEventListener('click', async () => {
+      const btn = modal.querySelector('#confirmImport')
+      const errorEl = modal.querySelector('#importError')
+      const password = modal.querySelector('#importPassword').value
+      if (!password) { errorEl.textContent = '请输入主密码'; return }
+      btn.disabled = true
+      errorEl.textContent = '正在验证备份，请稍候...'
+      try {
+        await verifyBackupPassword(data, password)
+        if (entriesCache.length) {
+          errorEl.textContent = '验证通过，正在备份当前数据...'
+          const backedUp = await exportBackup('before_import')
+          if (!backedUp) throw new Error('当前数据未成功备份，已中止导入')
+        }
+        errorEl.textContent = '正在写入数据...'
+        await applyImport(data)
+        modal.remove()
+        initialized = true
+        entriesCache = []
+        decryptedCache = {}
+        clearLockState()
+        lockVault()
+        markBackupDone()
+        navigate('unlock')
+        showToast('导入成功，请使用备份对应的主密码解锁')
+      } catch (err) {
+        errorEl.textContent = err.message || '导入失败'
+        btn.disabled = false
+      }
+    })
+  }
+
+  async function applyImport(data) {
+    const oldEntries = await dbGetAll(ENTRIES_STORE)
+    for (const entry of oldEntries) await dbDelete(ENTRIES_STORE, entry.id)
+    if (Array.isArray(data.categories) && data.categories.length) {
+      const oldCategories = await dbGetAll(CATEGORIES_STORE)
+      for (const cat of oldCategories) await dbDelete(CATEGORIES_STORE, cat.id)
+      for (const cat of data.categories) await dbPut(CATEGORIES_STORE, cat)
+    }
+    await dbPut(VAULT_STORE, data.config, 'config')
+    for (const entry of data.entries) await dbPut(ENTRIES_STORE, entry)
   }
 
   function renderChangePassword() {

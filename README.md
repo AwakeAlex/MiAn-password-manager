@@ -23,7 +23,9 @@
 - **跨平台 PWA**：可安装到手机主屏和桌面，支持离线使用。
 - **密码管理**：新增、编辑、删除、搜索、收藏密码记录。
 - **密码生成器**：随机密码、助记密码、PIN 三种模式。
-- **导入/导出**：导出为 AES-256-GCM 加密的 JSON 备份文件，包含盐值、迭代参数和加密数据。可用原主密码在同设备或不同设备导入恢复。
+- **加密备份与恢复**：备份包含全部密文记录、分类及 KDF 参数，不包含明文密码。Android 通过系统分享面板保存，桌面端可选择保存路径，另支持复制/粘贴备份文本。
+- **安全导入校验**：导入前预览备份时间与记录数，要求输入主密码并逐条试解密；替换数据前自动备份当前保险库，兼容 v1 旧备份。
+- **备份提醒**：长期未备份时首页温和提醒，设置页显示上次备份时间，重置保险库前提供备份入口。
 - **修改主密码**：可更换主密码并重新加密所有记录。
 - **安全声明页面**：在设置中查看应用的隐私与安全说明。
 - **重置保险库**：一键清空本地数据。
@@ -85,6 +87,16 @@ node build-local.js
 需要配置好：[Java 21](https://adoptium.net/)、[Android SDK](https://developer.android.com/studio)、[Gradle](https://gradle.org/)。
 
 ```bash
+# 安装 Capacitor 与 Android 分享/文件插件
+npm install
+
+# 构建单文件 Web 资源并更新 Android 原生插件
+node build-local.js
+npx cap update android
+
+# 同步 Web 资源到 Android 工程（PowerShell）
+Copy-Item "dist/mian-password-local.html" "android/app/src/main/assets/public/index.html" -Force
+
 cd android
 # 首次构建需创建 local.properties 并配置 SDK 路径
 # 内容示例：sdk.dir=C\:\\Users\\你的用户名\\AppData\\Local\\Android\\Sdk

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'mian-v3'
+const CACHE_NAME = 'mian-v4'
 
 const ASSETS = [
   './',

@@ -1,8 +1,15 @@
 {
+  "name": "mian-password-manager",
+  "version": "1.1.0",
+  "private": true,
   "devDependencies": {
     "@capacitor/android": "^8.4.2",
     "@capacitor/cli": "^7.6.8",
     "@capacitor/core": "^8.4.2",
     "androidjs": "^2.0.4"
+  },
+  "dependencies": {
+    "@capacitor/filesystem": "^8.1.5",
+    "@capacitor/share": "^8.0.3"
   }
 }
